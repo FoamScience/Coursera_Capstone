@@ -1,0 +1,354 @@
+---
+title: "Comparing a set of neighborhoods world-wide by Livability score"
+author: "Mohammed Elwardi Fadeli"
+date: "10/30/2019"
+documentclass: scrartcl
+output: 
+  pdf_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reticulate)
+use_python("usr/local/bin/python3")
+```
+
+# Introduction
+
+## Background
+
+Many of us have an intuitive notion of how **easy** it is to live in a certain neighborhood or city we're well informed about.
+Typically, one can classify few cities (by pure intuition) as "harder", "easier", or "the same" if he compares these cities to his
+current living neighborhood. This notion of (intuitively) "clustering cities" can be even extent to predicting which city will leave 
+its original cluster in the next few years.
+
+If one takes New York City as the reference city, he can compare the current state of its neighborhoods with each other, or compare
+the city to other cities. After that, and by aquiring the history of the features making up his model, he can even predict which
+cities will the New York cluster in the next few years (cities become much harder or easier to live in)
+
+Such clustering and prediction operations should be based on past history of different factors which contribute to the "easiness of living in a city". This information constitues an important factor in decisions taken by a wide range of companies world-wide
+and it's expressed as a Livability score.
+
+The Livability score measurement is not standardized world-wide, but this project focuses on five (5) factors:
+
+- Amenities availablity
+- Cost of living
+- Crime rate
+- Education level
+- Employment status
+
+
+## Problem
+
+Data that might determine the livability score of a city or a neighborhood may include the number of Amenities (Goceries, 
+schools, shopping, fitness facilities, libraries ... etc) that are available, transportation, health care costs, and poverty rate,
+different kinds of crimes rates, unemployment rate and even the percentage of the population with less-than-high-school level of 
+education.
+
+This project aims to cluster some neighborhoods and cities world-wide, focusing on New York City neighborhoods, so that similar
+cities and neighborhood would belong to the same cluster.
+
+## Interest
+
+If a city's cluster can be identified; predicting when the city might leave its cluster is a matter of repeating the process 
+described in this report while building a predictive model (eg. linear regression). Hence this project is an important step
+in an even more-crucial workflow.
+
+# Data acquisition and cleaning
+
+## Data sources
+
+For this project, we rely on two main sources of data:
+
+1. [A huge dataset of NYC neighborhood stats](https://www1.nyc.gov/assets/doh/downloads/excel/nta/nta-metadata.xlsx)
+2. [Foursuqare API](https://develop.foursquare.com)
+
+Of course, the NYC neighborhood stats dataset was last updated in December, 2017, but the foursquare data are fetched
+at a later date (November, 2018). We assume an offset of one year wouldn't affect the results that much.
+
+Foursquare also sets some limitations on how much we can get per day. Thus, the code assumes sandbox accounts are used 
+by default but also works in a much more accurate way if premium accounts are used.
+ 
+NYC is not the only city studied in this project, non-foursquare data for other cities was aquired manually and 
+added to the dataframe.
+
+[This webpage](https://www.areavibes.com/methodology/) was used as a base t oconstruct our own Livability score.
+
+## Data Cleaning
+
+The following features from the NYC neighborhood stats dataset were chosen to calculate the livability score:
+
+- Poverty
+- Violent Crime
+- Property Crime
+- EduLessThanHS
+- Crowded Housing
+- Health Ins
+- Unemployment Rate
+
+All these metrics were then normalized so they becomes indices in the range [0, 1]
+
+Also, data rows are cleaned while looking for Foursquare venues (if a Neighborhood fails to be found, it's dropped)
+for the following search queries:
+
+- Groceries
+- Food & Drink
+- Shopping
+- Schools
+- Entertainment
+- Fitness Facilities
+- Transportation
+- Libraries
+- Goods & Services
+
+If the user account is a sandbox one, only counts of these venues are used to cluster neighborhoods (due to 
+Foursqure's limitations on premium calls), but if a premium account is used, the code fetches "likes" for each venue and
+use that instead. Of course, this information is normalized over the Limit set for foursquare queries (20).
+
+Also, all queries results are saved into JSON files so we can retreive latitude/longitude data from Foursquare searches.
+
+## Feature selection
+
+After cleaning, the dataset has 20 features in addition to neighborhood names. But some of these features were not
+available for the majority of neighborhoods, so they were dropped (Only 16 remained).
+
+# Exploratory Data Analysis
+
+## Calculation of target variables
+
+To be able to estimate the livability of a neighborhood, five indices must be calculated using existing data:
+
+- Amenities availablity
+- Cost of living
+- Crime rate
+- Education level
+- Employment status
+
+Each index is calculated by multiplying the value of the feature by a certain coefficient (all coefficients for each index
+add up to 1, so they are a measure of the impact of a feature on the index's value; These can be estimated easily using a 
+survey for example).
+
+The contribution of dataframe colums are shown in the following table
+\footnote{These coefficients are simplified. The table can have much more columns and rows!}
+:
+
+```{python, echo=FALSE}
+import pandas as pd
+scoring = {
+    'Amenities':{
+        'Groceries': 0.17,
+        'Food & Drink': 0.17,
+        'Shopping': 0.26,
+        'Schools': 0.12,
+        'Entertainment': 0.16,
+        'Fitness Facilities': 0.06,
+        'Transportation': 0.03,
+        'Libraries': 0.03
+    },
+    'Cost of Living':{
+        'Goods and Services': 0.3,
+        'Groceries': 0.1,
+        'Transportation':0.1,
+        'Crowded Housing': 0.25,
+        'Health Ins': 0.15,
+        'Poverty': 0.1
+    },
+    'Crime':{
+        'Violent Crime': 0.65,
+        'Property Crime': 0.35
+    },
+    'Education':{
+        'EduLessThanHS': 0.85,
+        'Schools': 0.25
+    },
+    'Employment':{
+        'Unemployment Rate': 0.1, 
+    }
+}
+sc = pd.DataFrame.from_dict(scoring)
+sc.fillna(value=0.0, inplace=True)
+```
+
+```{r, echo=FALSE}
+knitr::kable(py$sc)
+```
+
+## Descriptive analysis of the data
+
+Let's start with discovering the distribution of data we got from the NYC neighborhood stats dataset:
+
+```{python, echo=FALSE}
+data = pd.read_csv('/tmp/full_data.csv')
+cols = ['Poverty','Violent Crime','Property Crime','EduLessThanHS',\
+'Crowded Housing','Health Ins', 'Unemployment Rate']
+```
+```{r, echo=FALSE}
+library('ggplot2')
+par(mar=c(10,8.5,1.5,1.5))
+boxplot(py$data[py$cols],
+        main = 'Data from NYC neighborhoods data set',
+        xlab = "Index Value",
+        col = "orange",
+        border = "darkblue",
+        horizontal = TRUE,
+        las=1,
+        notch = TRUE)
+```
+
+
+We notice no outliers when it comes to the pourcentage of residents with an education level less than High-School. We also 
+notice there is some neighborhood with exceptional property crime rate (That's Midtown Manhattan for you, 
+exceeding the normalization value!):
+```{python, echo=FALSE}
+row = data[data['Property Crime'] > 1.0][['NTA_Name','Property Crime']]
+```
+```{r, echo=FALSE}
+knitr::kable(py$row)
+```
+
+We can also visualize Foursquare's data as a box plot. In this plot, the number of venues (normalized to the Foursquare
+LIMIT) was used to produce the indices:
+
+```{python, echo=FALSE}
+cols = ['Groceries', 'Food & Drink', 'Shopping', 'Schools', 'Entertainment',
+       'Fitness Facilities', 'Transportation', 'Libraries',
+       'Goods and Services']
+```
+```{r, echo=FALSE}
+library('ggplot2')
+par(mar=c(10,8.5,1.5,1.5))
+boxplot(py$data[py$cols],
+        main = 'Data from Foursquare',
+        xlab = "Index Value",
+        col = "orange",
+        border = "darkblue",
+        horizontal = TRUE,
+        las=1,
+        notch = FALSE)
+```
+
+We notice how the data is biased towards 1.0 meaning that most of these neighborhoods have a decent number of these facilities 
+nearby. We can also see that some neighborhoods (completely) lack the presence of some facilities; However this may be a result
+of Foursquare data being biased towards shops and restaurants!
+
+## Relationships between different data features
+
+We'll use R's powerful pairs function to plot the relationship of data columns with each other.
+
+First, we'll start with visualizing data collected using Foursquare, which, in this case, doesn't show any type 
+of correlation between features:
+
+```{r, echo=TRUE}
+df = py$data
+names(df) = make.names(names(df))
+pairs(py$data[,2:10], pch = 19, lower.panel = NULL, bty="n", 
+      col="darkblue", cex.labels= 0.6, cex=.4, cex.lab=.2, 
+      cex.axis=.5, las=2,
+      main='Correlation between data features collected from Foursquare')
+```
+
+
+The next figure also shows the relationship between data features extracted from NYC neighborhood stats dataset: It seems these 
+features are weakly correlated; Our best chance of finding a linear relation ship is by investigative Property vs Violent crime 
+rates. 
+
+```{r, echo=FALSE}
+df = py$data
+names(df) = make.names(names(df))
+pairs(py$data[,11:16], pch = 19, lower.panel = NULL, bty="n", col="darkblue", 
+      cex.labels= 0.6, cex=.4, cex.lab=.2, cex.axis=.5,las=2,
+      main='Correlation between features collected from NYC neighborhood stats')
+```
+
+But we decided to retain all the features processed so far because the correlation between them is , at best, weak!
+
+After calculating the 5 main features for Livability Index, which can be done very easily in Python:
+
+```{python, echo=FALSE}
+for i in range(len(sc.transpose())):
+    tmp = pd.DataFrame(sc.transpose().iloc[[i]].values*data[data.columns[0:16]], columns=data.columns[0:16])
+    data[sc.transpose().index[i]] = pd.DataFrame.sum(tmp,axis=1)
+```
+```{r, echo=FALSE}
+df = py$data
+names(df) = make.names(names(df))
+pairs(py$data[,21:25], pch = 19, lower.panel = NULL, bty="n", col="darkblue", 
+      cex.labels= 1.0, cex=.4, cex.lab=.2, cex.axis=.5,las=2,
+      main='Correlation between main features of Livability Index')
+```
+
+# Predictive Modeling
+
+# Classification Models
+
+To cluster neighborhoods and cities based on their livability score, we use Python's scikit learn library to 
+define a function which takes as input the dataframe, a list of target variables, the number of clusters
+and the columns to use as a clustering criteria.
+
+```python
+from sklearn.cluster import KMeans
+
+def cluster_data(data, targets, kclusters, cols_to_cluster):
+    data_clustering = data[targets]
+    # run k-means clustering
+    kmeans = KMeans(n_clusters=kclusters, random_state=0)
+    kmeans.fit(data_clustering[cols_to_cluster])
+    # add clustering labels to dataframe
+    data_clustering.insert(0, 'Cluster Labels', kmeans.labels_)
+    return data_clustering
+```
+
+To cluster the neighborhoods into 7 clusters based on Amenties score, we can:
+
+```python
+clustered_data = cluster_data(data, [sc.columns[0]]+['NTA_Name'], 
+                              7, [sc.columns[0]])
+```
+
+The `folium` library can then be used to visualize these clusters (for example, around New York city):
+
+```python
+map = create_map(40.7128, -74.006, 10, data, 'Cluster Labels', 7)
+```
+![](/home/elwardi/coursera/Capstone/Coursera_Capstone/01-cluster-amenities.png)
+
+
+Which shows that, amenities-wise, all NYC neighborhoods are similar (They all have roughly the same number 
+of these facilities). But if when we cluster neighborhoods based on all 5 main features of the Livability score
+```python
+clustered_data = cluster_data(data, sc.columns, 7, sc.columns)
+```
+
+The map now looks like:
+
+![](/home/elwardi/coursera/Capstone/Coursera_Capstone/01-cluster-all-nyc.png)
+
+Which suggests that NYC can be devided into two clusters, one where living is easy and the other where living is harder
+(At least according to our simplified Livability index)!
+
+By zooming out a little (x2), we can see our diverse clusters:
+
+![](/home/elwardi/coursera/Capstone/Coursera_Capstone/01-zoomout-nyc.png)
+
+
+# Discussion
+
+The limitation on Foursquare's developper accounts greately affected the quality of data we could fetch from their API,
+and the data was biased towards resturants and coffee shops, but, combining it with another dataset was enough to hide 
+the biased effect.
+
+According to the whole 5 aspects of Livability score, regions far from NYC are a little easier to live in compared to the 
+neighborhoods near the city! Which is to be expected of course.
+
+# Conclusion
+
+
+In this study,I analyzed the livability index of several locations in the US and outside. I identified which cities and 
+neighborhoods look most similar when compared by the five main aspects of the Livability score: Amenities, Cost of living, 
+Crime, Education and Empoyment; which were roughly estimated using 16 other features.
+
+This clustering model can be useful in predicting when a city may leave its current cluster! It's a matter of repeatedly
+applying the model at different (past) time frames to build a new model with the goal of predicting the future behavior
+of the city in the next years in respect to the Livability Index.

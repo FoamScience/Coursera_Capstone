@@ -1,0 +1,228 @@
+---
+title: Livability scores of select neighborhoods world-wide
+subtitle: Comparing US cities and some similar cities based on their Livability score
+author: Fadeli Mohamed Elwardi
+date: 
+fontsize: 10pt
+output:
+ beamer_presentation:
+  theme: "Luebeck"
+  colortheme: "orchid"
+  fonttheme: "professionalfonts"
+# keep_tex: true
+# toc: true
+  slide_level: 3
+  #includes:
+   #in_header: /home/elwardi/Course/presentations/header.tex
+ #after_body: ~/Dropbox/teaching/table-of-contents.txt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reticulate)
+use_python("usr/local/bin/python3")
+```
+
+### Liveablity-based clustering is important
+
+- You know, figuring out which cities/neighborhoods are easier or harder to live in!
+
+\medskip
+
+- It's also crucial for predicting whether a city will be leaving its current cluster of 
+  similar cities in the near features
+  - Obviously, one should leave if the current city will get harder to live in
+  - Where to head?
+  - Well, to the easy-living city whose probability of leaving its cluster is minimal!
+
+\medskip
+
+- But this project takes care only of the first step: The clustering of cities.
+
+### Data acquisition and cleaning
+
+- A modified version of the scheme shown at **[This webpage](https://www.areavibes.com/methodology/)**
+  is used to estimate Livability Aspects.
+
+\medskip
+
+- For this project, we rely on two main sources of data:
+
+1. **[A huge data set of NYC neighborhood stats](https://www1.nyc.gov/assets/doh/downloads/excel/nta/nta-metadata.xlsx)**
+2. **[Foursquare API](https://develop.foursquare.com)**
+
+- To get arround 390 rows of data (Including some other cities worldwide that were added manually)
+
+\medskip
+
+- Data cleanup is performed while getting the Foursquare data
+  - No latitude/longitude data for each neighborhood were supplied
+  - Instead, search "near" these location in Foursquare and retrieve the coordinates
+
+### Data collected from NYC neighborhoods Database
+
+```{python, echo=FALSE}
+import pandas as pd
+data = pd.read_csv('/tmp/full_data.csv')
+cols = ['Poverty','Violent Crime','Property Crime','EduLessThanHS',\
+'Crowded Housing','Health Ins', 'Unemployment Rate']
+```
+```{r, echo=FALSE}
+library('ggplot2')
+par(mar=c(10,8.5,1.5,1.5))
+boxplot(py$data[py$cols],
+        main = 'Data from NYC neighborhoods data set',
+        xlab = "Index Value",
+        col = "orange",
+        border = "darkblue",
+        horizontal = TRUE,
+        las=1,
+        notch = TRUE)
+```
+
+### Data collected from Foursquare
+
+```{python, echo=FALSE}
+cols = ['Groceries', 'Food & Drink', 'Shopping', 'Schools', 'Entertainment',
+       'Fitness Facilities', 'Transportation', 'Libraries',
+       'Goods and Services']
+```
+```{r, echo=FALSE}
+library('ggplot2')
+par(mar=c(10,8.5,1.5,1.5))
+boxplot(py$data[py$cols],
+        main = 'Data from Foursquare',
+        xlab = "Index Value",
+        col = "orange",
+        border = "darkblue",
+        horizontal = TRUE,
+        las=1,
+        notch = FALSE)
+```
+
+### How these data features correlate with each other?
+
+```{r, echo=FALSE}
+df = py$data
+names(df) = make.names(names(df))
+pairs(py$data[,2:10], pch = 19, lower.panel = NULL, bty="n", 
+      col="darkblue", cex.labels= 0.8, cex=.4, cex.lab=.2, 
+      cex.axis=.5, las=2,
+      main='Correlation between data features collected from Foursquare')
+```
+
+### How these data features correlate with each other?
+
+```{r, echo=FALSE}
+df = py$data
+names(df) = make.names(names(df))
+pairs(py$data[,11:16], pch = 19, lower.panel = NULL, bty="n", col="darkblue", 
+      cex.labels= 1.0, cex=.4, cex.lab=.2, cex.axis=.5,las=2,
+      main='Correlation between features collected from NYC neighborhood stats')
+```
+
+### What to estimate from the data?
+
+Each Data feature is multiplied by a contribution coefficient for each Livability Aspect:
+
+\scriptsize 
+
+```{python, echo=FALSE}
+import pandas as pd
+scoring = {
+    'Amenities':{
+        'Groceries': 0.17,
+        'Food & Drink': 0.17,
+        'Shopping': 0.26,
+        'Schools': 0.12,
+        'Entertainment': 0.16,
+        'Fitness Facilities': 0.06,
+        'Transportation': 0.03,
+        'Libraries': 0.03
+    },
+    'Cost of Living':{
+        'Goods and Services': 0.3,
+        'Groceries': 0.1,
+        'Transportation':0.1,
+        'Crowded Housing': 0.25,
+        'Health Ins': 0.15,
+        'Poverty': 0.1
+    },
+    'Crime':{
+        'Violent Crime': 0.65,
+        'Property Crime': 0.35
+    },
+    'Education':{
+        'EduLessThanHS': 0.85,
+        'Schools': 0.25
+    },
+    'Employment':{
+        'Unemployment Rate': 0.1, 
+    }
+}
+sc = pd.DataFrame.from_dict(scoring)
+sc.fillna(value=0.0, inplace=True)
+```
+
+```{r, echo=FALSE}
+knitr::kable(py$sc)
+```
+
+\normalsize
+
+### How the estimated indices correlate?
+
+```{python, echo=FALSE}
+for i in range(len(sc.transpose())):
+    tmp = pd.DataFrame(sc.transpose().iloc[[i]].values*data[data.columns[0:16]], columns=data.columns[0:16])
+    data[sc.transpose().index[i]] = pd.DataFrame.sum(tmp,axis=1)
+```
+```{r, echo=FALSE}
+df = py$data
+names(df) = make.names(names(df))
+pairs(py$data[,21:25], pch = 19, lower.panel = NULL, bty="n", col="darkblue", 
+      cex.labels= 1.2, cex=.4, cex.lab=.2, cex.axis=.5,las=2,
+      main='Correlation between main features of Livability Index')
+```
+
+### Classification - NYC neighborhoods
+
+- NYC neighborhoods look very similar Amenities-wise
+
+\begin{figure}[b]  \centering 
+  \includegraphics[width=0.8\textwidth]{/home/elwardi/coursera/Capstone/Coursera_Capstone/01-cluster-amenities.png}
+	\caption{NYC neighborhoods clustering based on Amenities presence}\label{im01}
+\end{figure}
+
+
+### Classification - NYC neighborhoods
+
+- They can also be clustered into 2 groups (All 5 Livability Aspects):
+
+\begin{figure}[b]  \centering 
+  \includegraphics[width=0.75\textwidth]{/home/elwardi/coursera/Capstone/Coursera_Capstone/01-cluster-all-nyc.png}
+	\caption{NYC neighborhoods clustering based on Livability Aspects}\label{im02}
+\end{figure}
+
+### Classification - Broader view
+
+- The cities around New York are more diverse in terms of Livability similarity:
+
+\begin{figure}[b]  \centering 
+  \includegraphics[width=0.8\textwidth]{/home/elwardi/coursera/Capstone/Coursera_Capstone/01-zoomout-nyc.png}
+	\caption{Clustering of some US cities based on Livability Aspects}\label{im03}
+\end{figure}
+
+### Conclusion
+
+- Analyzed the livability index of several important locations
+- Identified which cities and neighborhoods look most similar when compared by the five main aspects of the Livability score
+
+\medskip
+
+- Acquiring Premium Foursquare account can greatly improve the model!
+
+\medskip
+
+- Can now predict when a city may leave its current cluster!
+  - By repeatedly applying the model at different (past) time frames
